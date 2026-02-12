@@ -7,12 +7,18 @@ import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 
+import { WebSocketServer } from "ws";
+
 const execAsync = promisify(exec);
 
 // ===== 설정 =====
 const AUTH_TOKEN = process.env.MCP_AUTH_TOKEN || "";
 const ALLOWED_DIRS = (process.env.ALLOWED_DIRS || "/app").split(",");
 const PORT = process.env.PORT || 3000;
+const BRIDGE_KEY = process.env.BRIDGE_KEY || "woo-local-2026";
+
+// ===== 로컬 브릿지 연결 =====
+let localBridge = null;
 
 // ===== Express 앱 =====
 const app = express();
@@ -250,6 +256,53 @@ function createMcpServer() {
     };
   });
 
+  // ----- Tool 8: local_bridge (로컬 PC 접근) -----
+  server.tool(
+    "local_bridge",
+    "로컬 PC 브릿지를 통해 명령 실행. action: ping/exec/read_file/write_file/list_dir",
+    {
+      action: { type: "string", description: "ping, exec, read_file, write_file, list_dir" },
+      command: { type: "string", description: "exec용 명령어" },
+      path: { type: "string", description: "파일/디렉토리 경로" },
+      content: { type: "string", description: "write_file용 내용" },
+    },
+    async ({ action, command, path: filePath, content }) => {
+      if (!localBridge || localBridge.readyState !== 1) {
+        return {
+          content: [{ type: "text", text: "로컬 브릿지 미연결. PC에서 start-bridge.bat 실행하세요." }],
+          isError: true,
+        };
+      }
+
+      try {
+        const id = Date.now();
+        const result = await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("타임아웃 (15초)")), 15000);
+          
+          const handler = (data) => {
+            const msg = JSON.parse(data.toString());
+            if (msg.id === id) {
+              localBridge.removeListener("message", handler);
+              clearTimeout(timeout);
+              resolve(msg.result || msg.error);
+            }
+          };
+          localBridge.on("message", handler);
+          localBridge.send(JSON.stringify({ id, action, command, path: filePath, content }));
+        });
+
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: `로컬 브릿지 에러: ${err.message}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+
   return server;
 }
 
@@ -307,16 +360,48 @@ app.get("/", (req, res) => {
     version: "1.0.0",
     status: "running",
     mcp_endpoint: "/mcp",
-    tools: ["ping", "exec", "read_file", "write_file", "list_dir", "http_request", "env_info"],
+    tools: ["ping", "exec", "read_file", "write_file", "list_dir", "http_request", "env_info", "local_bridge"],
     sessions: sessions.size,
     uptime: `${Math.round(process.uptime())}s`,
   });
 });
 
 // ===== 서버 시작 =====
-app.listen(PORT, () => {
+const httpServer = app.listen(PORT, () => {
   console.log(`woo-mcp-server running on port ${PORT}`);
   console.log(`MCP endpoint: http://localhost:${PORT}/mcp`);
+  console.log(`Bridge endpoint: ws://localhost:${PORT}/bridge`);
   console.log(`Auth: ${AUTH_TOKEN ? "enabled" : "disabled (set MCP_AUTH_TOKEN)"}`);
-  console.log(`Tools: ping, exec, read_file, write_file, list_dir, http_request, env_info`);
+  console.log(`Tools: ping, exec, read_file, write_file, list_dir, http_request, env_info, local_bridge`);
+});
+
+// ===== /bridge WebSocket 엔드포인트 =====
+const wss = new WebSocketServer({ server: httpServer, path: "/bridge" });
+
+wss.on("connection", (ws, req) => {
+  const key = req.headers["x-bridge-key"];
+  if (key !== BRIDGE_KEY) {
+    console.log("브릿지 연결 거부: 키 불일치");
+    ws.close(4001, "Invalid key");
+    return;
+  }
+
+  console.log("🌉 로컬 브릿지 연결됨!");
+  localBridge = ws;
+
+  ws.on("message", (data) => {
+    const msg = JSON.parse(data.toString());
+    if (msg.type === "register") {
+      console.log(`  PC: ${msg.hostname} (${msg.platform})`);
+    }
+  });
+
+  ws.on("close", () => {
+    console.log("🌉 로컬 브릿지 연결 끊김");
+    if (localBridge === ws) localBridge = null;
+  });
+
+  ws.on("error", (err) => {
+    console.log("🌉 브릿지 에러:", err.message);
+  });
 });
