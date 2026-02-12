@@ -70,7 +70,8 @@ function createMcpServer() {
         description: "타임아웃 (ms, 기본 10000)",
       },
     },
-    async (args) => {
+    async (args, extra) => {
+      if (!args?.command) return { content: [{ type: "text", text: "DEBUG: args=" + JSON.stringify(args) }] };
       const command = args?.command;
       const timeout = args?.timeout;
       // 위험한 명령 차단
