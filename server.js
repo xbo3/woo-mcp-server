@@ -70,7 +70,9 @@ function createMcpServer() {
         description: "타임아웃 (ms, 기본 10000)",
       },
     },
-    async ({ command, timeout }) => {
+    async (args) => {
+      const command = args?.command;
+      const timeout = args?.timeout;
       // 위험한 명령 차단
       const blocked = ["rm -rf /", "mkfs", "dd if=", ":(){ :", "shutdown", "reboot", "format"];
       if (blocked.some((b) => command.includes(b))) {
@@ -112,7 +114,8 @@ function createMcpServer() {
         description: "파일 경로",
       },
     },
-    async ({ path: filePath }) => {
+    async (args) => {
+      const filePath = args?.path;
       try {
         const content = await fs.readFile(filePath, "utf-8");
         return {
@@ -141,7 +144,9 @@ function createMcpServer() {
         description: "파일 내용",
       },
     },
-    async ({ path: filePath, content }) => {
+    async (args) => {
+      const filePath = args?.path;
+      const content = args?.content;
       try {
         await fs.mkdir(path.dirname(filePath), { recursive: true });
         await fs.writeFile(filePath, content, "utf-8");
@@ -167,7 +172,8 @@ function createMcpServer() {
         description: "디렉토리 경로",
       },
     },
-    async ({ path: dirPath }) => {
+    async (args) => {
+      const dirPath = args?.path;
       try {
         const entries = await fs.readdir(dirPath, { withFileTypes: true });
         const list = entries.map((e) => ({
@@ -208,7 +214,11 @@ function createMcpServer() {
         description: "요청 body (선택)",
       },
     },
-    async ({ url, method, headers, body }) => {
+    async (args) => {
+      const url = args?.url;
+      const method = args?.method;
+      const headers = args?.headers;
+      const body = args?.body;
       try {
         const opts = {
           method: method || "GET",
@@ -266,7 +276,12 @@ function createMcpServer() {
       path: { type: "string", description: "파일/디렉토리 경로" },
       content: { type: "string", description: "write_file용 내용" },
     },
-    async ({ action, command, path: filePath, content }) => {
+    async (args) => {
+      console.log("BRIDGE_ARGS:", JSON.stringify(args));
+      const action = args?.action;
+      const command = args?.command;
+      const filePath = args?.path;
+      const content = args?.content;
       if (!localBridge || localBridge.readyState !== 1) {
         return {
           content: [{ type: "text", text: "로컬 브릿지 미연결. PC에서 start-bridge.bat 실행하세요." }],
